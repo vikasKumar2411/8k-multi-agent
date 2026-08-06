@@ -1,5 +1,10 @@
 from typing import Any
 
+from src.observability import (
+    OperationType,
+    observe_operation,
+)
+
 
 EVENT_ITEM_MAP: dict[str, set[str]] = {
     "leadership": {"5.02"},
@@ -9,8 +14,15 @@ EVENT_ITEM_MAP: dict[str, set[str]] = {
     "acquisition": {"1.01", "2.01"},
     "bankruptcy": {"1.03"},
     "cybersecurity": {"1.05"},
-    "financial_obligation": {"2.03", "2.04"},
-    "operational": {"2.02", "7.01", "8.01"},
+    "financial_obligation": {
+        "2.03",
+        "2.04",
+    },
+    "operational": {
+        "2.02",
+        "7.01",
+        "8.01",
+    },
 }
 
 
@@ -61,7 +73,10 @@ TITLE_TERMS: dict[str, tuple[str, ...]] = {
 }
 
 
-ACTUAL_EVENT_TERMS: dict[str, tuple[str, ...]] = {
+ACTUAL_EVENT_TERMS: dict[
+    str,
+    tuple[str, ...],
+] = {
     "leadership": (
         "resigned",
         "resignation of",
@@ -133,27 +148,44 @@ def calculate_rerank_score(
     event_category: str | None,
 ) -> float:
     """
-    Combine vector similarity with deterministic SEC and event signals.
+    Combine vector similarity with deterministic SEC and event
+    signals.
 
-    The score is intentionally bounded by signal family:
-    - one SEC item boost,
+    The score is bounded by signal family:
+    - one SEC-item boost,
     - one title boost,
     - one actual-event-language boost,
     - one boilerplate penalty.
-
-    This prevents overlapping keywords from adding excessive score.
     """
-    base_score = float(result.get("score", 0.0))
-    payload = result.get("payload") or {}
+    base_score = float(
+        result.get("score", 0.0)
+    )
 
-    title = str(payload.get("title", "")).lower()
-    chunk_text = str(payload.get("chunk_text", "")).lower()
+    payload = (
+        result.get("payload")
+        or {}
+    )
+
+    title = str(
+        payload.get("title", "")
+    ).lower()
+
+    chunk_text = str(
+        payload.get("chunk_text", "")
+    ).lower()
 
     chunk_item_numbers = set(
-        payload.get("chunk_item_numbers") or []
+        payload.get(
+            "chunk_item_numbers"
+        )
+        or []
     )
+
     filing_item_numbers = set(
-        payload.get("filing_item_numbers") or []
+        payload.get(
+            "filing_item_numbers"
+        )
+        or []
     )
 
     rerank_score = base_score
@@ -161,25 +193,36 @@ def calculate_rerank_score(
     if not event_category:
         return rerank_score
 
-    normalized_category = event_category.strip().lower()
-    expected_items = EVENT_ITEM_MAP.get(normalized_category, set())
+    normalized_category = (
+        event_category
+        .strip()
+        .lower()
+    )
 
-    # Stronger signal when the relevant item number appears in this chunk.
-    if expected_items.intersection(chunk_item_numbers):
+    expected_items = EVENT_ITEM_MAP.get(
+        normalized_category,
+        set(),
+    )
+
+    if expected_items.intersection(
+        chunk_item_numbers
+    ):
         rerank_score += 0.18
 
-    # Weaker signal when the item appears elsewhere in the same filing.
-    elif expected_items.intersection(filing_item_numbers):
-        rerank_score += 0.08
-
-    # Apply at most one title-level relevance boost.
-    if any(
-        term in title
-        for term in TITLE_TERMS.get(normalized_category, ())
+    elif expected_items.intersection(
+        filing_item_numbers
     ):
         rerank_score += 0.08
 
-    # Apply at most one actual-event-language boost.
+    if any(
+        term in title
+        for term in TITLE_TERMS.get(
+            normalized_category,
+            (),
+        )
+    ):
+        rerank_score += 0.08
+
     if any(
         term in chunk_text
         for term in ACTUAL_EVENT_TERMS.get(
@@ -189,7 +232,6 @@ def calculate_rerank_score(
     ):
         rerank_score += 0.10
 
-    # Apply at most one boilerplate penalty.
     if any(
         term in chunk_text
         for term in BOILERPLATE_TERMS
@@ -208,29 +250,6 @@ def rerank_results(
 ) -> list[dict[str, Any]]:
     """
     Rerank vector-search results and enforce filing-level diversity.
-
-    Args:
-        results:
-            Raw Qdrant results. Each result should contain:
-            - score
-            - payload
-
-        event_category:
-            Optional normalized event category such as:
-            - leadership
-            - earnings
-            - restructuring
-            - cybersecurity
-            - operational
-
-        limit:
-            Maximum number of final results.
-
-        max_chunks_per_filing:
-            Maximum number of chunks allowed from one accession number.
-
-    Returns:
-        Reranked and diversified results.
     """
     if limit <= 0:
         return []
@@ -240,52 +259,187 @@ def rerank_results(
             "max_chunks_per_filing must be positive"
         )
 
-    scored_results: list[dict[str, Any]] = []
-
-    for result in results:
-        updated_result = dict(result)
-
-        vector_score = float(result.get("score", 0.0))
-        rerank_score = calculate_rerank_score(
-            result,
-            event_category=event_category,
-        )
-
-        updated_result["vector_score"] = vector_score
-        updated_result["rerank_score"] = rerank_score
-
-        scored_results.append(updated_result)
-
-    scored_results.sort(
-        key=lambda item: item["rerank_score"],
-        reverse=True,
+    normalized_category = (
+        event_category.strip().lower()
+        if event_category
+        else None
     )
 
-    selected: list[dict[str, Any]] = []
-    accession_counts: dict[str, int] = {}
+    with observe_operation(
+        operation_type=OperationType.RERANK,
+        operation_name="sec_event_reranking",
+        provider="deterministic",
+        attributes={
+            "input_candidate_count": len(results),
+            "requested_limit": limit,
+            "max_chunks_per_filing": (
+                max_chunks_per_filing
+            ),
+            "event_category": normalized_category,
+        },
+    ) as observation:
+        scored_results: list[
+            dict[str, Any]
+        ] = []
 
-    for result in scored_results:
-        payload = result.get("payload") or {}
+        boosted_result_count = 0
+        penalized_result_count = 0
 
-        accession_number = str(
-            payload.get("accession_number", "")
-        ).strip()
+        for result in results:
+            updated_result = dict(result)
 
-        # Fall back to point ID if accession metadata is unavailable.
-        diversity_key = (
-            accession_number
-            or str(result.get("id", "")).strip()
+            vector_score = float(
+                result.get("score", 0.0)
+            )
+
+            rerank_score = (
+                calculate_rerank_score(
+                    result,
+                    event_category=(
+                        normalized_category
+                    ),
+                )
+            )
+
+            if rerank_score > vector_score:
+                boosted_result_count += 1
+
+            elif rerank_score < vector_score:
+                penalized_result_count += 1
+
+            updated_result[
+                "vector_score"
+            ] = vector_score
+
+            updated_result[
+                "rerank_score"
+            ] = rerank_score
+
+            scored_results.append(
+                updated_result
+            )
+
+        scored_results.sort(
+            key=lambda item: item[
+                "rerank_score"
+            ],
+            reverse=True,
         )
 
-        count = accession_counts.get(diversity_key, 0)
+        selected: list[
+            dict[str, Any]
+        ] = []
 
-        if count >= max_chunks_per_filing:
-            continue
+        accession_counts: dict[
+            str,
+            int,
+        ] = {}
 
-        selected.append(result)
-        accession_counts[diversity_key] = count + 1
+        skipped_for_diversity = 0
 
-        if len(selected) >= limit:
-            break
+        for result in scored_results:
+            payload = (
+                result.get("payload")
+                or {}
+            )
 
-    return selected
+            accession_number = str(
+                payload.get(
+                    "accession_number",
+                    "",
+                )
+            ).strip()
+
+            diversity_key = (
+                accession_number
+                or str(
+                    result.get("id", "")
+                ).strip()
+            )
+
+            count = accession_counts.get(
+                diversity_key,
+                0,
+            )
+
+            if count >= max_chunks_per_filing:
+                skipped_for_diversity += 1
+                continue
+
+            selected.append(result)
+
+            accession_counts[
+                diversity_key
+            ] = count + 1
+
+            if len(selected) >= limit:
+                break
+
+        input_vector_scores = [
+            float(
+                result.get("score", 0.0)
+            )
+            for result in results
+        ]
+
+        selected_rerank_scores = [
+            float(
+                result.get(
+                    "rerank_score",
+                    0.0,
+                )
+            )
+            for result in selected
+        ]
+
+        top_vector_score = (
+            max(input_vector_scores)
+            if input_vector_scores
+            else None
+        )
+
+        top_rerank_score = (
+            max(selected_rerank_scores)
+            if selected_rerank_scores
+            else None
+        )
+
+        score_uplift = None
+
+        if (
+            top_vector_score is not None
+            and top_rerank_score is not None
+        ):
+            score_uplift = (
+                top_rerank_score
+                - top_vector_score
+            )
+
+        observation.update_attributes(
+            {
+                "output_result_count": len(selected),
+                "unique_filing_count": len(
+                    accession_counts
+                ),
+                "boosted_result_count": (
+                    boosted_result_count
+                ),
+                "penalized_result_count": (
+                    penalized_result_count
+                ),
+                "skipped_for_diversity": (
+                    skipped_for_diversity
+                ),
+                "top_vector_score": (
+                    top_vector_score
+                ),
+                "top_rerank_score": (
+                    top_rerank_score
+                ),
+                "top_score_uplift": (
+                    score_uplift
+                ),
+            }
+        )
+
+        return selected
