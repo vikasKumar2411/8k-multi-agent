@@ -6,6 +6,9 @@ from src.agents.answer_schemas import FinalAnswer
 from src.workflows.bounded_research.graph import (
     build_bounded_research_graph,
 )
+from src.observability import (
+    configure_observability_logging,
+)
 
 
 DEFAULT_QUERY = (
@@ -36,6 +39,7 @@ def print_section(title: str) -> None:
 
 
 def main() -> None:
+    configure_observability_logging()
     args = parse_args()
     user_query = args.query.strip()
 
