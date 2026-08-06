@@ -22,6 +22,12 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    langgraph_database_url: str = (
+    "postgresql://sec_copilot:sec_copilot"
+    "@localhost:5432/sec_copilot"
+    "?sslmode=disable"
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:
