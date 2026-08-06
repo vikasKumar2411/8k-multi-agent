@@ -6,6 +6,9 @@ from collections.abc import Callable
 from functools import wraps
 from typing import Any
 
+from src.observability.context import (
+    bind_execution_context,
+)
 from src.observability.events import (
     ExecutionEvent,
     ExecutionEventType,
@@ -26,7 +29,10 @@ NodeFunction = Callable[
 
 
 def _safe_length(value: Any) -> int:
-    if isinstance(value, (list, tuple, set, dict)):
+    if isinstance(
+        value,
+        (list, tuple, set, dict),
+    ):
         return len(value)
 
     return 0
@@ -37,29 +43,31 @@ def _build_output_attributes(
     node_name: str,
     output: dict[str, Any],
 ) -> dict[str, Any]:
-    """
-    Extract useful metrics without recording large or sensitive payloads.
-    """
-
     attributes: dict[str, Any] = {}
 
     if node_name == "plan_query":
-        plan = output.get("query_plan") or {}
+        plan = output.get(
+            "query_plan"
+        ) or {}
 
         if isinstance(plan, dict):
             attributes.update(
                 {
-                    "query_in_scope": plan.get(
-                        "in_scope"
+                    "query_in_scope": (
+                        plan.get("in_scope")
                     ),
-                    "clarification_needed": plan.get(
-                        "clarification_needed"
+                    "clarification_needed": (
+                        plan.get(
+                            "clarification_needed"
+                        )
                     ),
                     "symbol_count": _safe_length(
                         plan.get("symbols")
                     ),
-                    "event_category": plan.get(
-                        "event_category"
+                    "event_category": (
+                        plan.get(
+                            "event_category"
+                        )
                     ),
                     "task_type": plan.get(
                         "task_type"
@@ -68,21 +76,32 @@ def _build_output_attributes(
             )
 
     elif node_name == "retrieve_evidence":
-        evidence = output.get("evidence") or []
-        coverage = output.get("coverage") or {}
+        evidence = (
+            output.get("evidence")
+            or []
+        )
+
+        coverage = (
+            output.get("coverage")
+            or {}
+        )
 
         attributes.update(
             {
-                "evidence_count": _safe_length(
-                    evidence
+                "evidence_count": (
+                    _safe_length(evidence)
                 ),
-                "retrieval_attempts": output.get(
-                    "retrieval_attempts",
-                    0,
-                ),
-                "retried_symbol_count": _safe_length(
+                "retrieval_attempts": (
                     output.get(
-                        "retried_symbols"
+                        "retrieval_attempts",
+                        0,
+                    )
+                ),
+                "retried_symbol_count": (
+                    _safe_length(
+                        output.get(
+                            "retried_symbols"
+                        )
                     )
                 ),
             }
@@ -91,11 +110,15 @@ def _build_output_attributes(
         if isinstance(coverage, dict):
             attributes.update(
                 {
-                    "filing_count": coverage.get(
-                        "filing_count"
+                    "filing_count": (
+                        coverage.get(
+                            "filing_count"
+                        )
                     ),
-                    "coverage_complete": coverage.get(
-                        "complete"
+                    "coverage_complete": (
+                        coverage.get(
+                            "complete"
+                        )
                     ),
                     "missing_symbol_count": (
                         _safe_length(
@@ -108,16 +131,25 @@ def _build_output_attributes(
             )
 
     elif node_name == "analyze_evidence":
-        analysis = output.get("analysis") or {}
+        analysis = (
+            output.get("analysis")
+            or {}
+        )
 
         if isinstance(analysis, dict):
             attributes.update(
                 {
-                    "finding_count": _safe_length(
-                        analysis.get("findings")
+                    "finding_count": (
+                        _safe_length(
+                            analysis.get(
+                                "findings"
+                            )
+                        )
                     ),
-                    "analysis_complete": analysis.get(
-                        "analysis_complete"
+                    "analysis_complete": (
+                        analysis.get(
+                            "analysis_complete"
+                        )
                     ),
                     "analyzed_evidence_count": (
                         _safe_length(
@@ -142,16 +174,23 @@ def _build_output_attributes(
             or {}
         )
 
-        if isinstance(verification, dict):
+        if isinstance(
+            verification,
+            dict,
+        ):
             summary = (
-                verification.get("summary")
+                verification.get(
+                    "summary"
+                )
                 or {}
             )
 
             attributes.update(
                 {
-                    "answerable": verification.get(
-                        "answerable"
+                    "answerable": (
+                        verification.get(
+                            "answerable"
+                        )
                     ),
                     "verification_complete": (
                         verification.get(
@@ -164,11 +203,15 @@ def _build_output_attributes(
             if isinstance(summary, dict):
                 attributes.update(
                     {
-                        "total_claims": summary.get(
-                            "total_claims"
+                        "total_claims": (
+                            summary.get(
+                                "total_claims"
+                            )
                         ),
-                        "verified_claims": summary.get(
-                            "verified_claims"
+                        "verified_claims": (
+                            summary.get(
+                                "verified_claims"
+                            )
                         ),
                         "unsupported_claims": (
                             summary.get(
@@ -180,8 +223,10 @@ def _build_output_attributes(
                                 "contradicted_claims"
                             )
                         ),
-                        "verified_ratio": summary.get(
-                            "verified_ratio"
+                        "verified_ratio": (
+                            summary.get(
+                                "verified_ratio"
+                            )
                         ),
                     }
                 )
@@ -192,34 +237,45 @@ def _build_output_attributes(
             or {}
         )
 
-        if isinstance(final_answer, dict):
+        if isinstance(
+            final_answer,
+            dict,
+        ):
             answer_text = str(
-                final_answer.get("answer")
+                final_answer.get(
+                    "answer"
+                )
                 or ""
             )
 
             attributes.update(
                 {
-                    "answerable": final_answer.get(
-                        "answerable"
+                    "answerable": (
+                        final_answer.get(
+                            "answerable"
+                        )
                     ),
                     "verification_complete": (
                         final_answer.get(
                             "verification_complete"
                         )
                     ),
-                    "citation_count": _safe_length(
-                        final_answer.get(
-                            "citations"
+                    "citation_count": (
+                        _safe_length(
+                            final_answer.get(
+                                "citations"
+                            )
                         )
                     ),
-                    "warning_count": _safe_length(
-                        final_answer.get(
-                            "warnings"
+                    "warning_count": (
+                        _safe_length(
+                            final_answer.get(
+                                "warnings"
+                            )
                         )
                     ),
-                    "answer_character_count": len(
-                        answer_text
+                    "answer_character_count": (
+                        len(answer_text)
                     ),
                 }
             )
@@ -249,13 +305,6 @@ def instrument_node(
     node_name: str,
     node_function: NodeFunction,
 ) -> NodeFunction:
-    """
-    Wrap a LangGraph node with structured timing and error events.
-
-    The wrapped node preserves the original State -> Partial State
-    contract.
-    """
-
     @wraps(node_function)
     def wrapped(
         state: dict[str, Any],
@@ -275,25 +324,41 @@ def instrument_node(
         _emit_event(
             ExecutionEvent(
                 event_type=(
-                    ExecutionEventType.NODE_STARTED
+                    ExecutionEventType
+                    .NODE_STARTED
                 ),
                 run_id=run_id,
                 thread_id=thread_id,
-                workflow_name=WORKFLOW_NAME,
+                workflow_name=(
+                    WORKFLOW_NAME
+                ),
                 node_name=node_name,
                 status="running",
-                workflow_status=state.get(
-                    "workflow_status"
+                workflow_status=(
+                    state.get(
+                        "workflow_status"
+                    )
                 ),
                 attributes={},
             )
         )
 
         try:
-            output = node_function(state)
+            with bind_execution_context(
+                run_id=run_id,
+                thread_id=thread_id,
+                workflow_name=(
+                    WORKFLOW_NAME
+                ),
+                node_name=node_name,
+            ):
+                output = node_function(
+                    state
+                )
 
             latency_ms = (
-                time.perf_counter() - started
+                time.perf_counter()
+                - started
             ) * 1000
 
             output_attributes = (
@@ -311,17 +376,23 @@ def instrument_node(
                     ),
                     run_id=run_id,
                     thread_id=thread_id,
-                    workflow_name=WORKFLOW_NAME,
+                    workflow_name=(
+                        WORKFLOW_NAME
+                    ),
                     node_name=node_name,
                     status="completed",
-                    workflow_status=output.get(
-                        "workflow_status"
+                    workflow_status=(
+                        output.get(
+                            "workflow_status"
+                        )
                     ),
                     latency_ms=round(
                         latency_ms,
                         3,
                     ),
-                    attributes=output_attributes,
+                    attributes=(
+                        output_attributes
+                    ),
                 )
             )
 
@@ -329,28 +400,38 @@ def instrument_node(
 
         except Exception as exc:
             latency_ms = (
-                time.perf_counter() - started
+                time.perf_counter()
+                - started
             ) * 1000
 
             _emit_event(
                 ExecutionEvent(
                     event_type=(
-                        ExecutionEventType.NODE_FAILED
+                        ExecutionEventType
+                        .NODE_FAILED
                     ),
                     run_id=run_id,
                     thread_id=thread_id,
-                    workflow_name=WORKFLOW_NAME,
+                    workflow_name=(
+                        WORKFLOW_NAME
+                    ),
                     node_name=node_name,
                     status="failed",
-                    workflow_status=state.get(
-                        "workflow_status"
+                    workflow_status=(
+                        state.get(
+                            "workflow_status"
+                        )
                     ),
                     latency_ms=round(
                         latency_ms,
                         3,
                     ),
-                    error_type=type(exc).__name__,
-                    error_message=str(exc)[:1000],
+                    error_type=(
+                        type(exc).__name__
+                    ),
+                    error_message=(
+                        str(exc)[:1000]
+                    ),
                     attributes={},
                 )
             )
